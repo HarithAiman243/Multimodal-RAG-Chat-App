@@ -1,24 +1,24 @@
 # Core AI and LangChain Framework
 langchain
-langchain-openai # For OpenAI LLMs and Embeddings
+langchain-openai
 langchain-community
 
 # Vector Stores
-#langchain-chroma  # Integration for ChromaDB
-#chromadb
-langchain-pinecone # Integration for Pinecone
+# langchain-chroma
+# chromadb
+langchain-pinecone
 pinecone-client
 
-# Document Handling
-pypdf # For loading PDF files
+# Document and Data Handling
+pypdf
+facebook_business
+boto3
+gspread
+google-auth-oauthlib
+google-auth-httplib2
 
 # Frontend and Configuration
 streamlit
 streamlit-authenticator
-python-dotenv # For loading .env files (API keys)
-PyYAML # For parsing config.yaml
-
-
-#pip install facebook_business boto3 pinecone-client langchain-openai
-
-pip install gspread google-auth-oauthlib google-auth-httplib2
+python-dotenv
+PyYAML
