@@ -1,86 +1,70 @@
-from pinecone import Pinecone, ServerlessSpec, PodSpec
-from langchain_pinecone import PineconeVectorStore
-from langchain_chroma import Chroma
-from langchain_community.embeddings import OllamaEmbeddings
-from langchain.indexes import SQLRecordManager, index
-
-from src.pdf_handler import extract_pdf, load_pdf_directory, split_pdf
+# src/vectorstore.py
 
 import os
 import shutil
 from dotenv import load_dotenv
 
+from pinecone import Pinecone
+from langchain_pinecone import PineconeVectorStore
+from langchain_openai import OpenAIEmbeddings
+from langchain.indexes import SQLRecordManager
+
+from src.utils import load_config
+
 load_dotenv()
 
-
-def setup_pinecone(index_name, embedding_model, embedding_dim, metric='cosine', use_serverless=True):
-    pc = Pinecone(api_key=os.environ.get('PINECONE_API_KEY'))
-    if use_serverless:
-        spec = ServerlessSpec(cloud='aws', region='us-east-1')
-    else:
-        spec = PodSpec()
-
-    if index_name in pc.list_indexes().names():
-        pc.delete_index(index_name)
-
-    pc.create_index(
-        index_name,
-        dimension=embedding_dim,
-        metric=metric,
-        spec=spec
-    )
-
-    db = PineconeVectorStore(index_name=index_name, embedding=embedding_model)
-    return db
-
-
-def setup_chroma(index_name, embedding_model, persist_directory=None):
-    if not persist_directory:
-        persist_directory = './.cache/database'
-
-    os.makedirs(persist_directory, exist_ok=True)
-
-    db = Chroma(index_name, embedding_function=embedding_model, persist_directory=persist_directory)
-    return db
-
-
 class VectorDB:
-    def __init__(self, db_name, index_name, cache_dir=None):
-        embedding = OllamaEmbeddings(model='nomic-embed-text:latest', num_gpu=1)
-
-        if not cache_dir:
-            cache_dir = './.cache/database'
-        self.cache_dir = cache_dir
+    """
+    A class to connect to a persistent, pre-populated Pinecone vector database.
+    
+    This class is a 'read-only' client. It assumes that an external data pipeline
+    is responsible for creating the index and populating it with data from the
+    Ads Manager API.
+    
+    It does NOT contain logic to index new documents or delete the index.
+    """
+    def __init__(self):
+        config = load_config()
+        self.cache_dir = './.cache/database'
         os.makedirs(self.cache_dir, exist_ok=True)
 
-        if db_name == 'pinecone':
-            self.vectorstore = setup_pinecone(index_name, embedding, 768, 'cosine')
-        else:
-            self.vectorstore = setup_chroma(index_name, embedding, self.cache_dir)
-
-        namespace = f'{db_name}/{index_name}'
-        self.record_manager = SQLRecordManager(namespace,
-                                               db_url=f'sqlite:///{self.cache_dir}/record_manager_cache.sql')
+        # 1. Initialize the Embedding Model
+        embedding = OpenAIEmbeddings(model=config['embedding_model']['model_name'])
+        
+        # 2. Connect to Pinecone
+        index_name = config['pinecone_index_name']
+        pc = Pinecone(api_key=os.environ.get('PINECONE_API_KEY'))
+        
+        # --- CRITICAL CHANGE ---
+        # We no longer delete or create the index here. We only check if it exists.
+        # If it doesn't exist, it means the data pipeline hasn't been run, which is an error.
+        if index_name not in pc.list_indexes().names():
+            raise ValueError(
+                f"Pinecone index '{index_name}' not found! "
+                "Please run your data pipeline script first to create and populate the index."
+            )
+        
+        # 3. Initialize the Pinecone Vector Store object
+        self.vectorstore = PineconeVectorStore(index_name=index_name, embedding=embedding)
+        
+        # 4. Initialize Record Manager (still useful for some advanced LangChain features, but not for indexing here)
+        namespace = f'pinecone/{index_name}'
+        self.record_manager = SQLRecordManager(
+            namespace, db_url=f'sqlite:///{self.cache_dir}/record_manager_cache.sql'
+        )
         self.record_manager.create_schema()
 
-    def index(self, uploaded_file):
-        directory = extract_pdf(uploaded_file)
-        docs = load_pdf_directory(directory)
-        chunks = split_pdf(docs)
-
-        index(
-            docs_source=chunks,
-            record_manager=self.record_manager,
-            vector_store=self.vectorstore,
-            cleanup='full',
-            source_id_key='source'
-        )
-
-        for file in os.listdir(directory):
-            os.remove(os.path.join(directory, file))
-
     def as_retriever(self):
+        """
+        Returns the vector store instance as a retriever for the RAG chain.
+        """
+        # You can add retriever-specific configurations here if needed
+        # For example: search_kwargs={'k': 5}
         return self.vectorstore.as_retriever()
 
     def __del__(self):
-        shutil.rmtree(self.cache_dir)
+        """
+        Cleans up the local cache directory when the object is destroyed.
+        """
+        if os.path.exists(self.cache_dir):
+            shutil.rmtree(self.cache_dir)

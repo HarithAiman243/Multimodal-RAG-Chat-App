@@ -22,7 +22,6 @@ This documentation will guide you through the setup, usage, and technical aspect
 ├── src
 │   ├── vectorstore.py
 │   ├── pdf_handler.py
-│   ├── llama_cpp_chains.py
 │   ├── ollama_chain.py
 │   └── utils.py
 ├── app.py
