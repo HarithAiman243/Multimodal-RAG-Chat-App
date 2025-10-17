@@ -1,3 +1,36 @@
+# Will Update README. Please ignore below.
+
+## Project Structure
+```
+├── 📂 config/
+│   ├── config.yaml              # Main app settings (models, prompts, usernames)
+│   └── gsheet_credentials.json  # Google Sheets API key
+│
+├── 📂 pipelines/
+│   └── data_pipeline.py         # The main ETL script (Meta + GSheet -> Pinecone)
+│
+├── 📂 src/
+│   ├── 📂 chains/
+│   │   └── openai_chain.py      # Core RAG logic (replaces ollama_chain.py)
+│   │
+│   ├── 📂 data/
+│   │   ├── connectors.py        # Logic to connect to APIs (Meta, GSheet)
+│   │   └── transform.py         # Logic to merge and create text chunks
+│   │
+│   ├── 📂 database/
+│   │   └── vectorstore.py       # Logic to connect to Pinecone
+│   │
+│   └── utils.py                 # Utility functions (e.g., cloud chat history)
+│
+├── 📄 app.py                    # Your main Streamlit application entrypoint
+├── 📄 .env                       # All your secrets (API keys)
+├── 📄 .gitignore                # To keep secrets and cache out of git
+└── 📄 requirements.txt           # List of all Python packages to install
+```
+
+# IGNORE BELOW.
+
+
 # Multimodal-RAG-Chat-App
 
 ## Introduction
