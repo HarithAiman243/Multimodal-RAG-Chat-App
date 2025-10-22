@@ -1,6 +1,6 @@
-# Will Update README. Please ignore below.
+# Will Update README.
 
-## Project Structure
+## Updated Project Structure
 ```
 ├── 📂 .streamlit/
 │   └── secrets.toml
