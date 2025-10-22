@@ -22,3 +22,18 @@ PyYAML # For parsing config.yaml
 #pip install facebook_business boto3 pinecone-client langchain-openai
 
 pip install gspread google-auth-oauthlib google-auth-httplib2
+
+
+"""
+streamlit
+pinecone-client
+langchain-openai
+langchain
+python-dotenv
+boto3
+requests
+gspread
+google-auth-oauthlib
+google-auth-httplib2
+openai
+"""
