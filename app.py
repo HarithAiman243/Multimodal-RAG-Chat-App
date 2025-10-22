@@ -39,6 +39,14 @@ def run_app():
 
     # --- Sidebar for Conversation Management ---
     with st.sidebar:
+        # --- ADDED: Industry Dropdown ---
+        # We use a key to store the selection in st.session_state
+        st.selectbox(
+            "Select Industry:",
+            INDUSTRY_OPTIONS,
+            key="selected_industry"
+        )
+        
         st.title("Conversation History")
         
         if st.button("➕ New Chat"):
