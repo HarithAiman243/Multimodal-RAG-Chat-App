@@ -1,31 +1,24 @@
-# Will Update README. Please ignore below.
+# Will Update README.
 
-## Project Structure
+## Updated Project Structure
 ```
+├── 📂 .streamlit/
+│   └── secrets.toml
 ├── 📂 config/
-│   ├── config.yaml              # Main app settings (models, prompts, usernames)
-│   └── gsheet_credentials.json  # Google Sheets API key
-│
-├── 📂 pipelines/
-│   └── data_pipeline.py         # The main ETL script (Meta + GSheet -> Pinecone)
-│
+│   ├── config.yaml
+│   └── gsheet_credentials.json
+├── 📂 data/
+│   └── dataset.json
 ├── 📂 src/
-│   ├── 📂 chains/
-│   │   └── openai_chain.py      # Core RAG logic (replaces ollama_chain.py)
-│   │
-│   ├── 📂 data/
-│   │   ├── connectors.py        # Logic to connect to APIs (Meta, GSheet)
-│   │   └── transform.py         # Logic to merge and create text chunks
-│   │
-│   ├── 📂 database/
-│   │   └── vectorstore.py       # Logic to connect to Pinecone
-│   │
-│   └── utils.py                 # Utility functions (e.g., cloud chat history)
-│
-├── 📄 app.py                    # Your main Streamlit application entrypoint
-├── 📄 .env                       # All your secrets (API keys)
-├── 📄 .gitignore                # To keep secrets and cache out of git
-└── 📄 requirements.txt           # List of all Python packages to install
+│   ├── openai_chain.py
+│   ├── utils.py
+│   └── vectorstore.py
+├── 📄 .env
+├── 📄 .gitignore
+├── 📄 app.py
+├── 📄 get_data.py
+├── 📄 ingest.py
+└── 📄 requirements.txt
 ```
 
 # IGNORE BELOW.

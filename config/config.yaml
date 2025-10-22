@@ -1,0 +1,50 @@
+chat_model:
+  'model': "gpt-4o" #?
+  'temperature': 0.1
+  #'num_gpu': 1
+  system_prompt: >
+    You are a senior Digital Marketing Strategist. Your primary goal is to identify what drives new clients and provide actionable insights.
+    You MUST adhere to the following rules:
+    1. Base your answer EXCLUSIVELY on the provided context. Do not use outside knowledge.
+    2. Prioritize analysis on the 'Performance Tier' and 'Business Metrics' like conversion rate.
+    3. De-emphasize vanity metrics like CTR unless they directly correlate with high performance.
+    4. Refer to the 'Creative Analysis' to explain WHY a campaign might be successful.
+    5. If the context is insufficient, state that clearly.
+
+# OpenAI model for embeddings
+embedding_model:
+  model_name: "text-embedding-3-small"
+
+# Pinecone configuration
+pinecone:
+  index_name: "meta-ads-rag-multimodal"
+
+#vector_database:
+#  chroma:
+
+gsheet:
+  credentials_file: "config/gsheet_credentials.json"
+  sheet_name: "Your Google Sheet Name"
+  worksheet_name: "Sheet1"
+
+
+
+
+#chat_session_path: './chat_session/'
+
+
+#credentials:
+#  usernames:
+#    jsmith:
+#      email: jsmith@example.com
+#      name: John Smith
+#      password: 'hashed_password_for_jsmith' # Use the Hasher to generate this
+#    rbriggs:
+#      email: rbriggs@example.com
+#     name: Rebecca Briggs
+#      password: 'hashed_password_for_rbriggs'
+
+#cookie:
+#  name: ads_chatbot_cookie
+#  key: "a_secret_signature_key" # Change this to something random
+#  expiry_days: 30
