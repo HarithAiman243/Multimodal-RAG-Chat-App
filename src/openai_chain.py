@@ -6,6 +6,8 @@ from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_openai import ChatOpenAI
 from src.vectorstore import VectorDB
 
+import yaml
+
 class RAGChain:
     """
     Encapsulates the complete RAG logic, from retrieval to generation.
@@ -21,6 +23,10 @@ class RAGChain:
         with open("config/config.yaml", 'r') as f:
             config = yaml.safe_load(f)
 
+        ## Load prompts config
+        with open("config/prompts.yaml", 'r') as f:
+            prompts_config = yaml.safe_load(f)
+
         # 2. Initialize components
         vector_db = VectorDB()
         self.retriever = vector_db.as_retriever()
@@ -34,7 +40,8 @@ class RAGChain:
         # 3. Define the prompt template
         # This prompt uses the system message from config and structures the inputs.
         qa_prompt = ChatPromptTemplate.from_messages([
-            ("system", config['llm']['system_prompt']),
+            #("system", config['llm']['system_prompt']),
+            ("system", prompts_config['rag_analyst_prompt']),
             MessagesPlaceholder(variable_name="chat_history"),
             ("human", "{input}"),
         ])
