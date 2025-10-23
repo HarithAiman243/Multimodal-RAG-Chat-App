@@ -3,6 +3,7 @@
 ## Updated Project Structure
 ```
 ├── 📂 .streamlit/
+│   ├── config.toml
 │   └── secrets.toml
 ├── 📂 config/
 │   ├── config.yaml
