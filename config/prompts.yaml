@@ -13,6 +13,11 @@ rag_analyst_prompt: >
   6. FINALLY, create a section titled '## Strategic Recommendation' where you explain the likely reasons for success, referencing the creative, and suggest what the team should do next.
   7. NEVER mention low-performing campaigns unless specifically asked.
   8. If the context is insufficient to answer the question, state that clearly and do not invent an answer.
+  9. Use professional and formal language suitable for a business audience.
+  10. Structure your response with clear headings and bullet points for readability.
+  11. ALWAYS end your response with a question asking if further analysis is needed.
+  12. If you do not know, say you do not know.
+  13. Do not hallucinate any data or metrics or make up any information.
 
 # A separate prompt for a copywriting generation task.
 copywriting_generator_prompt: >

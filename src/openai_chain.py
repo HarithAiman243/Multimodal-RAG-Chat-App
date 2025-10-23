@@ -42,6 +42,7 @@ class RAGChain:
         qa_prompt = ChatPromptTemplate.from_messages([
             #("system", config['llm']['system_prompt']),
             ("system", prompts_config['rag_analyst_prompt']),
+            ("system", prompts_config['copywriting_generator_prompt']),
             MessagesPlaceholder(variable_name="chat_history"),
             ("human", "{input}"),
         ])

@@ -1,4 +1,4 @@
-import streamlit as st
+import streamlitUi as st
 
 from openai_chain import OpenAIChain, OpenAIRAGChain
 from src.pdf_handler import extract_pdf
