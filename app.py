@@ -4,6 +4,7 @@ import uuid
 from langchain_community.chat_message_histories import StreamlitChatMessageHistory
 from src.openai_chain import RAGChain
 from src.utils import save_chat_history, load_chat_history, get_saved_sessions
+from industry import INDUSTRY_OPTIONS 
 
 # --- Page Configuration ---
 st.set_page_config(page_title="Multimodal RAG LLM Chatbot", layout="wide")
@@ -36,9 +37,26 @@ def run_app():
     # --- Session State Initialization ---
     if "session_id" not in st.session_state:
         st.session_state.session_id = str(uuid.uuid4())
+    
 
     # --- Sidebar for Conversation Management ---
     with st.sidebar:
+        # --- ADDED: Industry Dropdown ---
+        # We use a key to store the selection in st.session_state
+        st.selectbox(
+            "Select Industry:",
+            INDUSTRY_OPTIONS,
+            key="selected_industry"
+        )
+        
+        # Show text input if "Others" is selected
+        if st.session_state.get("selected_industry") == "Others":
+            st.text_input(
+            "Please specify industry:",
+            key="custom_industry",
+            placeholder="Enter your industry"
+        )
+
         st.title("Conversation History")
         
         if st.button("➕ New Chat"):
@@ -80,6 +98,14 @@ def run_app():
     # Handle user input
     if user_input := st.chat_input("Ask about your active ad campaigns..."):
         st.chat_message("human").write(user_input)
+
+        # Get the selected industry
+        industry = st.session_state.get("selected_industry", "Not specified")
+        if industry == "Others":
+            industry = st.session_state.get("custom_industry", "Not specified")
+    
+    # Add industry context to the user input
+        contextualized_input = f"[Industry: {industry}] {user_input}"
         
         with st.spinner("Analyzing data and generating response..."):
             # Instantiate the RAGChain with the current session's chat history
