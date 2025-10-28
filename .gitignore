@@ -16,3 +16,7 @@ config/gsheet_credentials.json
 # IDE settings
 .vscode/
 .idea/
+
+test_vision.py
+testburger.jpg
+testburger1.jpg

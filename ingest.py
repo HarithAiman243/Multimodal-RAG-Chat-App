@@ -1,190 +1,155 @@
 import os
 import json
+import time
+import boto3
 import yaml
+from io import BytesIO
 from dotenv import load_dotenv
-
-import openai
-from pinecone import Pinecone, ServerlessSpec
+from tqdm import tqdm
+from openai import OpenAI
+from pinecone import Pinecone
 from langchain_openai import OpenAIEmbeddings
 
-def ingest_data_script():
-    """
-    Main function for the simplified data ingestion script.
-    """
-    load_dotenv()
+# Load .env
+load_dotenv()
 
-    # --- Configuration Loading ---
-    with open("config/config.yaml", 'r') as f:
-        config = yaml.safe_load(f)
+# ============ CONFIG SETUP ============
+CONFIG_PATH = "config/config.yaml"
 
-    INPUT_FILE = os.path.join("data", "dataset.json")
-    PINECONE_INDEX_NAME = config['pinecone']['index_name']
+def load_config():
+    if not os.path.exists(CONFIG_PATH):
+        raise FileNotFoundError(f"Missing config file at {CONFIG_PATH}")
+    with open(CONFIG_PATH, "r") as f:
+        return yaml.safe_load(f)
 
-    # --- Client Initialization ---
+config = load_config()
+INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", config["pinecone"]["index_name"])
+EMBEDDING_MODEL = config["embedding_model"]["model_name"]
+
+# ============ CLIENT SETUP ============
+print("Initializing OpenAI, Pinecone, and AWS clients...")
+
+openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+pinecone_client = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
+s3 = boto3.client(
+    "s3",
+    aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+    aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY")
+)
+
+bucket_name = os.getenv("AWS_S3_BUCKET_NAME")
+s3_key = os.getenv("S3_KEY", "data/dataset.json")
+local_data_path = "data/dataset.json"
+
+# ============ LOAD DATA ============
+print("\nStep 1: Loading dataset...")
+
+def load_dataset():
+    # Try to load from S3, fallback to local
     try:
-        openai_client = openai.OpenAI()
-        pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
-        embeddings = OpenAIEmbeddings(model='text-embedding-3-small')
+        print(f"Attempting to load from S3: {bucket_name}/{s3_key}")
+        response = s3.get_object(Bucket=bucket_name, Key=s3_key)
+        data = json.load(response["Body"])
+        print(f"✅ Loaded dataset from S3 ({len(data)} records)")
     except Exception as e:
-        print(f"Error initializing clients: {e}")
-        return
+        print(f"⚠️ S3 load failed ({e}). Falling back to local file.")
+        if not os.path.exists(local_data_path):
+            raise FileNotFoundError("No dataset found in S3 or local path.")
+        with open(local_data_path, "r") as f:
+            data = json.load(f)
+        print(f"✅ Loaded dataset locally ({len(data)} records)")
+    return data
 
-    # --- Helper Functions ---
-    def generate_image_caption(image_url: str) -> str:
-        """Uses GPT-4o to generate a text description of an ad creative."""
-        if not image_url:
-            return "No visual creative provided."
-        try:
-            response = openai_client.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": "Describe this ad creative in detail for a marketing analysis. What is the subject, setting, color palette, and overall mood? What is the likely target audience?"},
-                            {"type": "image_url", "image_url": {"url": image_url}},
-                        ],
-                    }
-                ],
-                max_tokens=150,
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            # Be more specific about potential URL errors
-            if "HTTP status code 400" in str(e) or "invalid image format" in str(e).lower():
-                return "Image analysis failed: Invalid or inaccessible image URL."
-            return f"Image analysis failed: {e}"
-        
-    def safe_get(data_dict, key_path, default="N/A"):
-        """Safely gets a nested key from a dictionary."""
-        keys = key_path.split('.')
-        val = data_dict
-        try:
-            for key in keys:
-                val = val[key]
-            return val if val else default
-        except (KeyError, TypeError, IndexError):
-            return default
+dataset = load_dataset()
 
-    def create_text_chunk(ad: dict) -> str:
-        """Transforms a single ad's data into a descriptive text chunk for RAG, using richer data."""
-        creative = ad.get('creative', {})
-        campaign_name = safe_get(ad, 'campaign.name')
-        adset_name = safe_get(ad, 'adset.name')
-        
-        # --- Extract Creative Details with Fallbacks ---
-        title = creative.get('title') or safe_get(creative, 'object_story_spec.link_data.name') or safe_get(creative, 'object_story_spec.video_data.title', 'N/A')
-        body = creative.get('body') or safe_get(creative, 'object_story_spec.link_data.message') or safe_get(creative, 'object_story_spec.text_data.message', 'N/A')
-        description = safe_get(creative, 'object_story_spec.link_data.description', 'N/A')
-        link = safe_get(creative, 'object_story_spec.link_data.link', 'N/A')
-        cta_type = safe_get(creative, 'object_story_spec.video_data.call_to_action.type', 'N/A')
-        
-        # Determine media type
-        media_type = "Unknown"
-        primary_image_url = creative.get('image_url') # Use the primary image for captioning
-        
-        if safe_get(creative, 'asset_feed_spec.videos', []):
-            media_type = "Video"
-            # Try to get a video thumbnail if primary image is missing
-            if not primary_image_url:
-                 primary_image_url = safe_get(creative, 'object_story_spec.video_data.image_url') or creative.get('thumbnail_url')
-        elif safe_get(creative, 'asset_feed_spec.images', []):
-             media_type = "Image Feed"
-        elif primary_image_url:
-             media_type = "Image"
-        elif safe_get(creative, 'object_story_spec.link_data.child_attachments', []):
-            media_type = "Carousel"
-            # Try to get first carousel image if primary is missing
-            if not primary_image_url:
-                first_child = safe_get(creative, 'object_story_spec.link_data.child_attachments.0', {})
-                # Need logic here to potentially fetch image URL from image_hash if needed, complex.
-                # Sticking to thumbnail_url as simpler fallback for now.
-                primary_image_url = creative.get('thumbnail_url') # Fallback for carousel preview
+# ============ ENSURE INDEX EXISTS ============
+print("\nStep 2: Verifying Pinecone index...")
 
-        # Get multimodal description using the best available image URL
-        visual_description = generate_image_caption(primary_image_url)
-        # Get the URL we actually want to embed for preview (might be different from caption source)
-        image_url_to_save = creative.get('image_url') or creative.get('thumbnail_url', 'N/A')
+if INDEX_NAME not in pinecone_client.list_indexes().names():
+    print(f"⚠️ Index '{INDEX_NAME}' not found. Creating new index...")
+    pinecone_client.create_index(
+        name=INDEX_NAME,
+        dimension=1536,  # text-embedding-3-small dimension
+        metric="cosine"
+    )
+else:
+    print(f"✅ Pinecone index '{INDEX_NAME}' found.")
 
-        # Assemble the final text chunk
-        chunk_lines = [
-            f"Ad Report for '{safe_get(ad, 'name')}' (ID: {safe_get(ad, 'id')}):",
-            f"- Status: {safe_get(ad, 'status')}",
-            f"- Hierarchy: Campaign '{campaign_name}' > Ad Set '{adset_name}'.",
-            f"- Media Type: {media_type}",
-            f"- Ad Creative Text:",
-            f"  - Title: {title}",
-            f"  - Body: {body}",
-            f"  - Description (Link): {description}",
-            f"  - Destination Link: {link}",
-            f"  - Call To Action: {cta_type}",
-            f"- Creative Visual Analysis: {visual_description}",
-            # Embed the preview URL tag
-            f"##IMAGE_PREVIEW_URL##{image_url_to_save}##"
-        ]
-        chunk = "\n".join(chunk_lines)
-        return chunk
+index = pinecone_client.Index(INDEX_NAME)
 
-    # --- Main Ingestion Logic ---
-    print("Starting simplified data ingestion process...")
-    
-    # 1. Load source data
+# ============ EMBEDDING FUNCTION ============
+embeddings = OpenAIEmbeddings(model=EMBEDDING_MODEL)
+
+# ============ IMAGE CAPTIONING (GPT-4o) ============
+def generate_caption(image_url):
+    """
+    Uses GPT-4o to generate a short caption or description of an image.
+    Returns a concise textual summary to enrich the RAG context.
+    """
     try:
-        with open(INPUT_FILE, 'r') as f:
-            ads_data = json.load(f)
-    except FileNotFoundError:
-        print(f"Error: {INPUT_FILE} not found. Please run get_data.py first.")
-        return
+        prompt = f"Describe this marketing image in one short sentence (focus on emotion, color, and message): {image_url}"
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are a creative advertising assistant."},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=50
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"⚠️ Failed to generate caption for {image_url}: {e}")
+        return ""
 
-    # 2. Connect to or create Pinecone Index
-    if PINECONE_INDEX_NAME not in pc.list_indexes().names():
-        print(f"Creating new Pinecone index: {PINECONE_INDEX_NAME}")
-        pc.create_index(name=PINECONE_INDEX_NAME, dimension=1536, metric='cosine',
-                        spec=ServerlessSpec(
-                            cloud='aws',
-                            region='us-east-1'
-                        ))
-    index = pc.Index(PINECONE_INDEX_NAME)
+# ============ BUILD DOCUMENTS ============
+print("\nStep 3: Preparing documents for embedding...")
 
-    # 3. Transform and Prepare Vectors
-    vectors_to_upsert = []
-    print(f"\nProcessing {len(ads_data)} ads. This may take some time due to image captioning...")
-    for i, ad in enumerate(ads_data):
-        print(f"  - Processing ad {i+1}/{len(ads_data)}: {ad.get('name', 'N/A')}")
-        try:
-            text_chunk = create_text_chunk(ad)
-            vector = embeddings.embed_query(text_chunk)
-            vectors_to_upsert.append({
-                "id": ad['id'],
-                "values": vector,
-                "metadata": {"text": text_chunk}
-            })
-        except Exception as e:
-            print(f"    ⚠️ Error processing ad {ad.get('id', 'N/A')}: {e}")
-            # Optionally skip this ad or handle the error differently
-            continue
+documents = []
+for ad in tqdm(dataset, desc="Processing Ads"):
+    ad_text = (
+        f"Ad Name: {ad.get('name', '')}\n"
+        f"Primary Text: {ad.get('primary_text', '')}\n"
+        f"Headline: {ad.get('headline', '')}\n"
+        f"Description: {ad.get('description', '')}\n"
+        f"CTA: {ad.get('call_to_action_type', '')}\n"
+    )
 
-    # 4. Upsert to Pinecone in batches
-    if vectors_to_upsert:
-        print("\nUpserting vectors to Pinecone...")
-        batch_size = 100
-        for i in range(0, len(vectors_to_upsert), batch_size):
-            batch = vectors_to_upsert[i:i + batch_size]
-            try:
-                index.upsert(vectors=batch)
-                print(f"  - Upserted batch {i//batch_size + 1}")
-            except Exception as e:
-                 print(f"    ⚠️ Error upserting batch {i//batch_size + 1}: {e}")
-        
-        try:
-            stats = index.describe_index_stats()
-            print(f"\nSuccess: Ingestion complete. Pinecone index '{PINECONE_INDEX_NAME}' now contains {stats['total_vector_count']} vectors.")
-        except Exception as e:
-            print(f"\nIngestion finished, but failed to get final index stats: {e}")
-            print("Please check the Pinecone console for the vector count.")
-            
-    else:
-        print("No vectors were generated to upsert.")
+    # Optional image caption
+    image_caption = ""
+    if ad.get("image_url"):
+        image_caption = generate_caption(ad["image_url"])
 
-if __name__ == "__main__":
-    ingest_data_script()
+    combined_text = f"{ad_text}\nImage Summary: {image_caption}"
+
+    documents.append({
+        "id": ad.get("id", str(time.time())),
+        "text": combined_text,
+        "metadata": {
+            "ad_id": ad.get("id", ""),
+            "ad_name": ad.get("name", ""),
+            "image_url": ad.get("image_url", ""),
+            "video_url": ad.get("video_url", ""),
+            "caption": image_caption
+        }
+    })
+
+print(f"✅ Prepared {len(documents)} documents for embedding.")
+
+# ============ EMBEDDING + UPSERT ============
+print("\nStep 4: Generating embeddings and upserting to Pinecone...")
+
+batch_size = 50
+for i in range(0, len(documents), batch_size):
+    batch = documents[i:i + batch_size]
+    texts = [doc["text"] for doc in batch]
+    metadatas = [doc["metadata"] for doc in batch]
+    ids = [doc["id"] for doc in batch]
+
+    try:
+        vectors = embeddings.embed_documents(texts)
+        index.upsert(vectors=zip(ids, vectors, metadatas))
+    except Exception as e:
+        print(f"⚠️ Batch {i // batch_size + 1} failed: {e}")
+
+print("✅ Ingestion complete.")
+print(f"💾 Pinecone index '{INDEX_NAME}' now contains {len(documents)} vectors.")

@@ -2,16 +2,17 @@ import os
 import json
 import requests
 from dotenv import load_dotenv
-import boto3
+import pandas as pd
 
-# --- Helper Function for Safe Nested Dictionary Access ---
+# -------------------------------------------------------------------
+# Helper Functions
+# -------------------------------------------------------------------
 def safe_get(data_dict, key_path, default=None):
-    """Safely gets a nested key from a dictionary."""
+    """Safely get nested dictionary or list values using dot notation."""
     keys = key_path.split('.')
     val = data_dict
     try:
         for key in keys:
-            # Simple handling for list indices
             if isinstance(val, list):
                 try:
                     key = int(key)
@@ -22,179 +23,96 @@ def safe_get(data_dict, key_path, default=None):
     except (KeyError, TypeError, IndexError):
         return default
 
-# --- Data Determination Functions ---
 
 def determine_format_category(ad_creative):
-    """Analyzes the creative data to determine the ad format."""
+    """Classify ad creative into Video, Carousel, or Static Image."""
     if not ad_creative:
         return "Unknown"
-
-    # Check for video first
     if safe_get(ad_creative, 'asset_feed_spec.videos') or safe_get(ad_creative, 'object_story_spec.video_data.video_id'):
         return "Video/Reel"
-
-    # Check for Carousel
     if safe_get(ad_creative, 'object_story_spec.link_data.child_attachments'):
         return "Carousel"
-
-    # Check for Static Image (Includes checking for top-level image/hash, thumbnail, or photo_data)
     if safe_get(ad_creative, 'image_url') or safe_get(ad_creative, 'asset_feed_spec.images') or safe_get(ad_creative, 'image_hash') or safe_get(ad_creative, 'thumbnail_url') or safe_get(ad_creative, 'object_story_spec.photo_data'):
-        return "Static Image" 
-
+        return "Static Image"
     return "Unknown"
 
-# ----------------------------------------------------------------------
-# --- ASSET RESOLUTION FUNCTIONS (Step 2) ---
-# ----------------------------------------------------------------------
 
 def fetch_image_urls(hashes, access_token, ad_account_id, api_version):
-    """Fetches the image URL for all provided hashes using the /adimages endpoint."""
+    """Resolve image hashes into actual image URLs."""
     if not hashes:
         return {}
-    
-    print(f"Step 2: Resolving {len(hashes)} unique image hashes to URLs...")
+    print(f"Step 2: Resolving {len(hashes)} image hashes...")
     hash_url_map = {}
-    hashes_str = json.dumps(list(hashes))
-
-    adimages_params = {
-        'fields': 'url,hash',
-        'hashes': hashes_str,
-        'access_token': access_token
-    }
-    
     BASE_URL = f"https://graph.facebook.com/{api_version}/"
     url = f"{BASE_URL}{ad_account_id}/adimages"
-    
+    params = {'fields': 'url,hash', 'hashes': json.dumps(list(hashes)), 'access_token': access_token}
     try:
-        response = requests.get(url, params=adimages_params)
-        response.raise_for_status()
-        data = response.json()
-        
-        for image_data in data.get('data', []):
-            hash_url_map[image_data['hash']] = image_data['url']
-            
-    except requests.exceptions.RequestException as e:
-        # If API error, print it but allow function to return partial map
-        print(f"Error fetching image URLs: {e}") 
-
-    print(f"Resolved {len(hash_url_map)} image URLs.")
+        res = requests.get(url, params=params)
+        res.raise_for_status()
+        for item in res.json().get('data', []):
+            hash_url_map[item['hash']] = item['url']
+    except Exception as e:
+        print("Error fetching image URLs:", e)
     return hash_url_map
 
+
 def fetch_video_urls(video_ids, access_token, api_version):
-    """Fetches the permanent source URL for all provided video IDs."""
+    """Resolve video IDs into direct source URLs."""
     if not video_ids:
         return {}
-    
+    print(f"Step 2B: Resolving {len(video_ids)} video IDs...")
     video_url_map = {}
     BASE_URL = f"https://graph.facebook.com/{api_version}/"
-    #BATCH_SIZE = 50 # Limit the number of IDs per request
-    
-    # CORRECTED LOGIC: Query IDs individually
-    for video_id in video_ids:
-        # Correct URL format: /<video_id>?fields=source
-        url = f"{BASE_URL}{video_id}" 
-        params = {
-            'fields': 'source',
-            'access_token': access_token
-        }
-
+    for vid in video_ids:
+        url = f"{BASE_URL}{vid}"
+        params = {'fields': 'source', 'access_token': access_token}
         try:
-            response = requests.get(url, params=params)
-            response.raise_for_status()
-            data = response.json()
-            
-            if isinstance(data, dict) and 'source' in data:
-                video_url_map[video_id] = data['source']
-            
-        except requests.exceptions.RequestException as e:
-            # Print error for the specific ID that failed
-            print(f"Skipping video ID {video_id} due to HTTP Error: {e}") 
-            
+            res = requests.get(url, params=params)
+            res.raise_for_status()
+            data = res.json()
+            if 'source' in data:
+                video_url_map[vid] = data['source']
+        except Exception as e:
+            print(f"Skipping {vid}:", e)
     return video_url_map
 
-# ----------------------------------------------------------------------
-# --- NEW FUNCTION: S3 UPLOAD ---
-# ----------------------------------------------------------------------
-
-def upload_to_s3(json_content, bucket_name, key, aws_access_key_id, aws_secret_access_key):
-    """Uploads the JSON string content directly to an S3 bucket."""
-    try:
-        s3 = boto3.client(
-            's3',
-            aws_access_key_id=aws_access_key_id,
-            aws_secret_access_key=aws_secret_access_key
-        )
-        
-        s3.put_object(
-            Bucket=bucket_name,
-            Key=key,
-            Body=json_content.encode('utf-8'),
-            ContentType='application/json'
-        )
-        return True
-    except Exception as e:
-        print(f"FATAL S3 UPLOAD ERROR: {e}")
-        return False
-    
-
-# ----------------------------------------------------------------------
-# --- MAIN SCRIPT EXECUTION (Steps 1 & 3) ---
-# ----------------------------------------------------------------------
-
+# -------------------------------------------------------------------
+# Main Data Fetch Script
+# -------------------------------------------------------------------
 def get_data_script():
-    """
-    Main function for the data acquisition script, fetching ads, resolving assets, 
-    and saving data.
-    """
     load_dotenv()
 
-    # --- Configuration ---
     ACCESS_TOKEN = os.getenv("META_ACCESS_TOKEN")
     AD_ACCOUNT_ID = os.getenv("META_AD_ACCOUNT_ID")
-    API_VERSION = "v24.0"
-    
-    # S3 Configuration
-    AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
-    AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
-    AWS_S3_BUCKET_NAME = os.getenv("AWS_S3_BUCKET_NAME")
-    S3_KEY = os.getenv("S3_KEY", "data/dataset.json") # Use default key if not set
+    API_VERSION = "v21.0"
 
-    #OUTPUT_FILE = os.path.join("data", "dataset.json") 
-    
-    #if not all([ACCESS_TOKEN, AD_ACCOUNT_ID]):
-    #    print("Error: META_ACCESS_TOKEN and META_AD_ACCOUNT_ID must be set in the .env file.")
-    #    return
-
-    if not all([ACCESS_TOKEN, AD_ACCOUNT_ID, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_BUCKET_NAME]):
-        print("Error: Required environment variables (META_ACCESS_TOKEN, AD_ACCOUNT_ID, AWS keys, S3_BUCKET_NAME) must be set.")
+    if not all([ACCESS_TOKEN, AD_ACCOUNT_ID]):
+        print("❌ Missing Meta Ads credentials in .env file.")
         return
 
-    # --- API Fields: Comprehensive selection for all ad types ---
+    # -------------------------------------------------------------
+    # Step 1: Fetch all ads and creatives
+    # -------------------------------------------------------------
     FIELDS = (
         "id,name,status,"
-        "campaign{id,name},"
-        "adset{id,name},"
-        "creative{"
-            "title,body,image_url,thumbnail_url,"
-            "image_hash," 
-            "asset_feed_spec{videos{video_id},images{url}},"
-            "object_story_spec{"
-                "text_data{message},"
-                "link_data{link,name,description,caption,child_attachments{link,name,description,image_hash,video_id,picture},picture},"
-                "video_data{video_id,image_url,title,call_to_action{type,value}},"
-                "photo_data{image_hash,url}" 
-            "}"
-        "}"
+        "campaign{id,name,objective,status,daily_budget,start_time,stop_time},"
+        "adset{id,name,optimization_goal,status,daily_budget,"
+        "targeting{geo_locations,countries,age_min,age_max,genders,"
+        "publisher_platforms,facebook_positions,instagram_positions}},"
+        "creative{title,body,image_url,thumbnail_url,image_hash,"
+        "asset_feed_spec{videos{video_id},images{url}},"
+        "object_story_spec{"
+        "text_data{message},"
+        "link_data{link,name,description,caption,picture,"
+        "child_attachments{link,name,description,image_hash,video_id,picture}},"
+        "video_data{video_id,image_url,title,call_to_action{type,value}},"
+        "photo_data{image_hash,url}"
+        "}},"
+        "insights.time_range({'since':'2025-10-01','until':'2025-10-28'})"
+        "{spend,impressions,clicks,ctr,cpc,cpm,actions,results,cost_per_action_type,purchase_roas}"
     )
-    
+
     def fetch_all_ads():
-        """
-        Fetches all active ads and collects all image hashes and video IDs for later resolution.
-        Returns (list_of_ads, set_of_hashes, set_of_video_ids).
-        """
-        all_ads = []
-        all_hashes = set()
-        all_video_ids = set()
         url = f"https://graph.facebook.com/{API_VERSION}/{AD_ACCOUNT_ID}/ads"
         params = {
             'access_token': ACCESS_TOKEN,
@@ -203,146 +121,148 @@ def get_data_script():
             'limit': 100
         }
 
-        print("Step 1: Fetching ad creative data from Meta API...")
-        page_num = 1
+        ads, hashes, vids = [], set(), set()
+        print("Fetching ads...")
+        page = 1
         while url:
-            try:
-                if page_num > 1:
-                    response = requests.get(url)
-                    params = {}
-                else:
-                    response = requests.get(url, params=params)
+            res = requests.get(url, params=params if page == 1 else {})
+            res.raise_for_status()
+            data = res.json()
+            for ad in data.get("data", []):
+                creative = ad.get("creative", {})
+                ad["format_category"] = determine_format_category(creative)
 
-                response.encoding = 'utf-8'
-                response.raise_for_status() 
-                data = response.json()
+                # Collect image hashes
+                if safe_get(creative, "image_hash"):
+                    hashes.add(creative["image_hash"])
+                for att in safe_get(creative, "object_story_spec.link_data.child_attachments", []):
+                    if "image_hash" in att:
+                        hashes.add(att["image_hash"])
 
-                if 'data' in data and data['data']:
-                    
-                    for ad in data['data']:
-                        creative = ad.get('creative', {})
-                        ad['format_category'] = determine_format_category(creative)
-                        
-                        # --- HASH COLLECTION LOGIC ---
-                        if safe_get(creative, 'image_hash'):
-                            all_hashes.add(creative['image_hash'])
-                            
-                        for attachment in safe_get(creative, 'object_story_spec.link_data.child_attachments', []):
-                            if 'image_hash' in attachment:
-                                all_hashes.add(attachment['image_hash'])
+                # Collect video IDs
+                for vid in safe_get(creative, "asset_feed_spec.videos", []):
+                    if "video_id" in vid:
+                        vids.add(vid["video_id"])
+                if safe_get(creative, "object_story_spec.video_data.video_id"):
+                    vids.add(creative["object_story_spec"]["video_data"]["video_id"])
+                ads.append(ad)
 
-                        photo_data = safe_get(creative, 'object_story_spec.photo_data', {})
-                        if photo_data.get('image_hash') and not photo_data.get('url'):
-                            all_hashes.add(photo_data['image_hash'])
+            print(f"Fetched page {page} ({len(data.get('data', []))} ads)")
+            url = data.get("paging", {}).get("next")
+            page += 1
+        return ads, hashes, vids
 
-                        # --- VIDEO ID COLLECTION LOGIC ---
-                        for video_asset in safe_get(creative, 'asset_feed_spec.videos', []):
-                            if 'video_id' in video_asset:
-                                all_video_ids.add(video_asset['video_id'])
-
-                        if safe_get(creative, 'object_story_spec.video_data.video_id'):
-                            all_video_ids.add(creative['object_story_spec']['video_data']['video_id'])
-                            
-                        all_ads.append(ad)
-                        
-                    print(f"  - Fetched page {page_num} ({len(data['data'])} ads)")
-                    
-                    url = data.get('paging', {}).get('next')
-                    page_num += 1
-                else:
-                    break
-            except requests.exceptions.RequestException as e:
-                # Print API error, but continue if possible
-                print(f"API Request failed: {e}")
-                if 'response' in locals() and response.text:
-                    print(f"Response content: {response.text}")
-                break
-        
-        return all_ads, all_hashes, all_video_ids
-
-    print("Starting full data acquisition and asset resolution...")
     ads_data, unique_hashes, unique_video_ids = fetch_all_ads()
-    
-    # Step 2A & 2B: Resolve assets
+
+    # -------------------------------------------------------------
+    # Step 2: Resolve media URLs
+    # -------------------------------------------------------------
     hash_url_map = fetch_image_urls(unique_hashes, ACCESS_TOKEN, AD_ACCOUNT_ID, API_VERSION)
     video_url_map = fetch_video_urls(unique_video_ids, ACCESS_TOKEN, API_VERSION)
 
-    # Step 3: Inject resolved URLs back into the creative data
-    print("Step 3: Appending resolved image/video URLs back to ad data...")
-    
-    processed_ads = []
-    
     for ad in ads_data:
-        creative = ad.get('creative', {})
-        
-        # --- IMAGE RESOLUTION ---
-        
-        # 1. Top-level hash 
-        top_hash = safe_get(creative, 'image_hash')
+        creative = ad.get("creative", {})
+        top_hash = safe_get(creative, "image_hash")
         if top_hash in hash_url_map:
-            creative['image_url'] = hash_url_map[top_hash] 
+            creative["image_url"] = hash_url_map[top_hash]
 
-        # 2. Carousel hashes
-        if ad['format_category'] == 'Carousel':
-            children = safe_get(creative, 'object_story_spec.link_data.child_attachments', [])
-            for child in children:
-                child_hash = child.get('image_hash')
-                if child_hash in hash_url_map:
-                    child['image_url'] = hash_url_map[child_hash]
+        for v in safe_get(creative, "asset_feed_spec.videos", []):
+            vid = v.get("video_id")
+            if vid in video_url_map:
+                v["source_url"] = video_url_map[vid]
 
-        # 3. Photo_data hash
-        photo_data = safe_get(ad, 'creative.object_story_spec.photo_data')
-        if photo_data and 'image_hash' in photo_data:
-            photo_hash = photo_data['image_hash']
-            if photo_hash in hash_url_map:
-                photo_data['url'] = hash_url_map[photo_hash]
-        
-        # --- VIDEO RESOLUTION ---
+        video_data = safe_get(creative, "object_story_spec.video_data")
+        if video_data and "video_id" in video_data:
+            vid = video_data["video_id"]
+            if vid in video_url_map:
+                video_data["video_url"] = video_url_map[vid]
 
-        # 4. Inject resolved video URLs (asset_feed_spec)
-        for video_asset in safe_get(creative, 'asset_feed_spec.videos', []):
-            video_id = video_asset.get('video_id')
-            if video_id in video_url_map:
-                # Use a new field 'source_url' for assets in the feed spec
-                video_asset['source_url'] = video_url_map[video_id]
+    # -------------------------------------------------------------
+    # Step 3: Save raw JSON locally
+    # -------------------------------------------------------------
+    os.makedirs("data", exist_ok=True)
+    json_path = "data/dataset.json"
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(ads_data, f, indent=2, ensure_ascii=False)
+    print(f"✅ Saved raw dataset to {json_path}")
 
-        # 5. Inject resolved video URL (video_data)
-        video_data = safe_get(creative, 'object_story_spec.video_data')
-        if video_data and 'video_id' in video_data:
-            video_id = video_data['video_id']
-            if video_id in video_url_map:
-                # INJECTION FIX: Map the resolved URL to 'video_url'
-                video_data['video_url'] = video_url_map[video_id]
-                    
-        processed_ads.append(ad)
+    # -------------------------------------------------------------
+    # Step 4: Flatten into CSV
+    # -------------------------------------------------------------
+    records = []
+    for ad in ads_data:
+        campaign = ad.get("campaign", {})
+        adset = ad.get("adset", {})
+        creative = ad.get("creative", {})
 
-    # --- Local File Storage ---
-    if processed_ads:
-        json_content = json.dumps(processed_ads, indent=2, ensure_ascii=False)
-        
-    #    os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
-    #    with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
-    #        f.write(json_content)
-    #    print(f"Success: Fetched and processed a total of {len(processed_ads)} ads and saved to {OUTPUT_FILE}")
+        # ✅ Unwrap nested insights
+        ins_data = None
+        if isinstance(ad.get("insights"), dict):
+            ins_list = ad["insights"].get("data", [])
+            if isinstance(ins_list, list) and len(ins_list) > 0:
+                ins_data = ins_list[0]
+        ins = ins_data or {}
 
-    #else:
-    #    print("Warning: No data was fetched or processed.")
+        # ✅ Extract metrics safely
+        spend = float(ins.get("spend", 0))
+        impressions = int(ins.get("impressions", 0))
+        clicks = int(ins.get("clicks", 0))
+        ctr = float(ins.get("ctr", 0))
+        cpc = float(ins.get("cpc", 0))
+        cpm = float(ins.get("cpm", 0))
 
-        success = upload_to_s3(json_content, AWS_S3_BUCKET_NAME, S3_KEY, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
-        
-        if success:
-            print(f"Success: Fetched and processed a total of {len(processed_ads)} ads and SAVED TO S3 ({AWS_S3_BUCKET_NAME}/{S3_KEY}).")
-        else:
-            # Fallback to local file save if S3 fails
-            print("S3 upload failed. Falling back to local file save...")
-            OUTPUT_FILE = os.path.join("data", "dataset.json") 
-            os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
-            with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
-                f.write(json_content)
-            print(f"Warning: Data saved locally to {OUTPUT_FILE}.")
+        # Handle purchase_roas (list or dict)
+        roas_val = 0
+        roas_field = ins.get("purchase_roas")
+        if isinstance(roas_field, list) and len(roas_field) > 0:
+            val = roas_field[0].get("value")
+            if val:
+                roas_val = float(val)
 
-    else:
-        print("Warning: No data was fetched or processed.")
+        # Derive conversions and conversion rate
+        actions = ins.get("actions", [])
+        conversions = sum(int(a.get("value", 0)) for a in actions if a.get("action_type") in ["offsite_conversion", "purchase"])
+        conversion_rate = (conversions / clicks * 100) if clicks > 0 else 0
 
+        rec = {
+            "ad_id": ad.get("id"),
+            "ad_name": ad.get("name"),
+            "ad_status": ad.get("status"),
+            "format_category": ad.get("format_category"),
+
+            "campaign_id": campaign.get("id"),
+            "campaign_name": campaign.get("name"),
+            "campaign_objective": campaign.get("objective"),
+
+            "adset_id": adset.get("id"),
+            "adset_name": adset.get("name"),
+            "optimization_goal": adset.get("optimization_goal"),
+
+            "creative_title": creative.get("title"),
+            "creative_body": creative.get("body"),
+            "creative_image_url": creative.get("image_url"),
+            "creative_thumbnail_url": creative.get("thumbnail_url"),
+
+            "copy_text": safe_get(creative, "object_story_spec.text_data.message"),
+            "link_url": safe_get(creative, "object_story_spec.link_data.link"),
+
+            "spend": spend,
+            "impressions": impressions,
+            "clicks": clicks,
+            "ctr": ctr,
+            "cpc": cpc,
+            "cpm": cpm,
+            "roas": roas_val,
+            "conversions": conversions,
+            "conversion_rate": conversion_rate,
+        }
+        records.append(rec)
+
+    df = pd.DataFrame(records)
+    csv_path = "data/meta_ads_data.csv"
+    df.to_csv(csv_path, index=False, encoding="utf-8-sig")
+    print(f"✅ Exported {len(df)} ads to {csv_path}")
+
+# -------------------------------------------------------------------
 if __name__ == "__main__":
     get_data_script()
