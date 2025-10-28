@@ -10,7 +10,7 @@ __pycache__/
 .streamlit/secrets.toml
 
 # Data files
-data/dataset.json
+#data/dataset.json
 config/gsheet_credentials.json
 
 # IDE settings
