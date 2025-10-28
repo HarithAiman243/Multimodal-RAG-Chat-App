@@ -1,28 +1,129 @@
 # Will Update README.
 
-## Updated Project Structure
+## Updated Project Structure (28-10-2025)
 ```
-├── 📂 .streamlit/
+├── 📂 .streamlit/              - Streamlit config & secrets  
 │   ├── config.toml
 │   └── secrets.toml
-├── 📂 config/
+├── 📂 config/                  - YAML config + credentials
 │   ├── config.yaml
+│   ├── prompts.yaml
 │   └── gsheet_credentials.json
-├── 📂 data/
-│   └── dataset.json
-├── 📂 src/
+├── 📂 data/                    - Source files and dataset.json
+│   └── dataset.json  
+├── 📂 src/                     - Core modules (vectorstore, chains, utils)
+│   ├── app_config.py
 │   ├── openai_chain.py
+│   ├── streamlitUi.py
 │   ├── utils.py
 │   └── vectorstore.py
 ├── 📄 .env
 ├── 📄 .gitignore
-├── 📄 app.py
-├── 📄 get_data.py
-├── 📄 ingest.py
-└── 📄 requirements.txt
+├── 📄 app.py                     
+├── 📄 ingest.py                - Document ingestion / indexing script  
+├── 📄 get_data.py              - Utilities to fetch sample data  
+├── 📄 requirements.txt         - Python dependencies  
+└── 📄 README.md
 ```
 
 # IGNORE BELOW.
+
+
+
+
+# Multimodal RAG Chat App
+
+Lightweight Retrieval-Augmented-Generation (RAG) chat application supporting multimodal inputs (text, PDF, audio/video planned). Use this project to build a Streamlit UI that answers user queries using a local/remote LLM and a vector store for document retrieval.
+
+## Key features
+- PDF/document ingestion → chunking → embedding → vector store indexing
+- Retrieval + LLM answer generation (RAG)
+- Streamlit frontend for interactive chat and file upload
+- Configurable model provider (Ollama / other providers)
+- Pinecone-compatible vector store (configurable)
+
+## Quick start (Linux)
+1. Clone repo
+   git clone <your-repo-url>
+   cd Multimodal-RAG-Chat-App
+
+2. Create venv and install deps
+   python3 -m venv .venv
+   source .venv/bin/activate
+   pip install -U pip
+   pip install -r requirements.txt
+
+3. Configure environment and services
+   - Copy and edit .env (or set env vars):
+     - PINECONE_API_KEY, PINECONE_ENV, PINECONE_INDEX (if using Pinecone)
+     - OLLAMA_HOST or other model provider host/config
+     - Any provider API keys (OPENAI_API_KEY) if used
+   - Edit `config/config.yaml` to map model names and options
+   - If using Ollama: install and pull required models (see Ollama docs)
+
+4. Ingest documents (example)
+   python3 ingest.py --source data/your-file.pdf
+
+5. Run the app
+   streamlit run app.py
+
+## Repository layout
+├── 📂 .streamlit/              - Streamlit config & secrets  
+│   ├── config.toml
+│   └── secrets.toml
+├── 📂 config/                  - YAML config + credentials
+│   ├── config.yaml
+│   ├── prompts.yaml
+│   └── gsheet_credentials.json
+├── 📂 data/                    - Source files and dataset.json
+│   └── dataset.json  
+├── 📂 src/                     - Core modules (vectorstore, chains, utils)
+│   ├── app_config.py
+│   ├── openai_chain.py
+│   ├── streamlitUi.py
+│   ├── utils.py
+│   └── vectorstore.py
+├── 📄 .env
+├── 📄 .gitignore
+├── 📄 app.py                     
+├── 📄 ingest.py                - Document ingestion / indexing script  
+├── 📄 get_data.py              - Utilities to fetch sample data  
+├── 📄 requirements.txt         - Python dependencies  
+└── 📄 README.md
+
+## Important files
+- src/vectorstore.py — vector DB integration and retrieval utilities  
+- src/openai_chain.py (or ollama_chain.py) — LLM chain + prompt logic  
+- src/utils.py — helpers: chunking, text extraction, metadata  
+- ingest.py — orchestrates conversion → chunking → embedding → upsert
+
+## Configuration
+- config/config.yaml controls:
+  - model provider name and options
+  - chunk size / overlap
+  - retriever options (k, score_threshold)
+- .env stores secrets (do not commit)
+
+## Development notes
+- Keep embeddings & index persistent to avoid re-ingestion
+- Use small batch sizes when upserting big datasets
+- Add unit tests under tests/ for ingestion and retrieval logic
+
+## Troubleshooting
+- "Model not found" — ensure Ollama model is pulled or config points to a valid provider
+- Pinecone auth errors — verify API key and environment values
+- Streamlit permission/file errors — run from project root and ensure files exist in data/
+
+## Roadmap
+- Audio/video processing + transcription
+- Docker containerization
+- Additional model providers (OpenAI, Vertex, etc.)
+
+## License & contact
+- License: MIT (adjust as needed)  
+- Contact: Buitanphuong712@gmail.com
+
+
 
 
 # Multimodal-RAG-Chat-App
